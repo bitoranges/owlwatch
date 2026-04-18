@@ -1,5 +1,9 @@
 # owlwatch
 
+<p align="center">
+  <img src="demo.gif" alt="owlwatch demo" width="640" />
+</p>
+
 macOS / Linux system performance monitor — works in terminal, Claude Code, Cursor, Windsurf, or any AI agent.
 
 One command to check system health, detect orphan processes, analyze Chrome, and clean up.
