@@ -1,109 +1,145 @@
 #!/bin/bash
-# install.sh — owlwatch 安装脚本
-# 用法：bash install.sh [--claude | --standalone]
-#   --claude    安装到 ~/.claude/skills/owlwatch/（默认）
-#   --standalone 安装到 ~/.local/bin/（仅命令行使用）
+# install.sh — owlwatch installer
+# Usage: bash install.sh [OPTIONS]
+#   (default)          Install CLI to ~/.local/bin
+#   --claude           Also install as Claude Code skill
+#   --cursor           Print Cursor rules setup instructions
+#   --windsurf         Print Windsurf rules setup instructions
+#   --uninstall        Remove owlwatch
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MODE="claude"
+INSTALL_CLAUDE=false
+INSTALL_CURSOR=false
+INSTALL_WINDSURF=false
 
-if [[ "${1:-}" == "--standalone" ]]; then
-  MODE="standalone"
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --claude)   INSTALL_CLAUDE=true ;;
+    --cursor)   INSTALL_CURSOR=true ;;
+    --windsurf) INSTALL_WINDSURF=true ;;
+    --uninstall)
+      echo "Removing owlwatch..."
+      rm -f "$HOME/.local/bin/owlwatch"
+      rm -f "$HOME/.local/bin/owlwatch-"*.sh
+      rm -rf "$HOME/.local/share/owlwatch"
+      rm -rf "$HOME/.claude/skills/owlwatch"
+      echo "Done."
+      exit 0
+      ;;
+    --help|-h)
+      echo "Usage: bash install.sh [--claude] [--cursor] [--windsurf] [--uninstall]"
+      exit 0
+      ;;
+  esac
+done
 
 echo ""
 echo "owlwatch installer"
 echo "=================="
 
-# ─── Claude Code skill 模式 ───
-if [[ "$MODE" == "claude" ]]; then
-  TARGET="$HOME/.claude/skills/owlwatch"
+# ─── 1. Standalone CLI（默认必装） ───
 
-  echo "Mode: Claude Code skill"
-  echo "Target: $TARGET"
-  echo ""
+BIN_DIR="$HOME/.local/bin"
+SHARE_DIR="$HOME/.local/share/owlwatch"
 
-  # 备份旧配置（如果存在）
-  local conf_backup=""
-  if [[ -f "$TARGET/conf/owlwatch.conf" ]]; then
-    echo "Preserving existing config..."
-    conf_backup="$(mktemp)"
-    cp "$TARGET/conf/owlwatch.conf" "$conf_backup"
-  fi
+mkdir -p "$BIN_DIR"
+mkdir -p "$SHARE_DIR"/{lib,conf}
 
-  # 复制文件
-  mkdir -p "$TARGET"/{bin,lib,conf}
-  cp "$SCRIPT_DIR"/bin/*.sh "$TARGET/bin/"
-  cp "$SCRIPT_DIR"/lib/*.sh "$TARGET/lib/"
-  cp "$SCRIPT_DIR/conf/owlwatch.conf.example" "$TARGET/conf/"
+# 复制主入口和子脚本
+cp "$SCRIPT_DIR/bin/owlwatch" "$BIN_DIR/"
+chmod +x "$BIN_DIR/owlwatch"
 
-  # 恢复配置（如果之前有）
-  if [[ -n "$conf_backup" ]] && [[ -f "$conf_backup" ]]; then
-    cp "$conf_backup" "$TARGET/conf/owlwatch.conf"
-    rm -f "$conf_backup"
-    echo "Restored existing config."
-  else
-    # 首次安装：复制示例配置
-    if [[ ! -f "$TARGET/conf/owlwatch.conf" ]]; then
-      cp "$TARGET/conf/owlwatch.conf.example" "$TARGET/conf/owlwatch.conf"
-    fi
-  fi
+for script in "$SCRIPT_DIR"/bin/owlwatch-*.sh; do
+  [[ -f "$script" ]] || continue
+  cp "$script" "$SHARE_DIR/bin-temp/" 2>/dev/null || true
+done
 
-  # 复制 SKILL.md（Claude Code 注册入口）
-  cp "$SCRIPT_DIR/SKILL.md" "$TARGET/"
+# lib 和 conf
+cp "$SCRIPT_DIR"/lib/*.sh "$SHARE_DIR/lib/"
+cp "$SCRIPT_DIR/conf/owlwatch.conf.example" "$SHARE_DIR/conf/"
+[[ ! -f "$SHARE_DIR/conf/owlwatch.conf" ]] && \
+  cp "$SHARE_DIR/conf/owlwatch.conf.example" "$SHARE_DIR/conf/owlwatch.conf"
 
-  # 设置执行权限
-  chmod +x "$TARGET"/bin/*.sh
+# 复制子脚本到 share 目录，主入口直接调用
+mkdir -p "$SHARE_DIR/bin"
+cp "$SCRIPT_DIR"/bin/owlwatch-*.sh "$SHARE_DIR/bin/"
+chmod +x "$SHARE_DIR/bin/"*.sh
 
-  echo ""
-  echo "Installed successfully!"
-  echo ""
-  echo "Usage:"
-  echo "  /owlwatch          # In Claude Code"
-  echo "  bash $TARGET/bin/owlwatch-health.sh   # Direct"
-  echo ""
-
-# ─── Standalone 模式 ───
-else
-  TARGET="$HOME/.local/bin"
-  mkdir -p "$TARGET"
-
-  echo "Mode: Standalone"
-  echo "Target: $TARGET"
-  echo ""
-
-  # 复制所有脚本到 ~/.local/bin
-  for script in "$SCRIPT_DIR"/bin/owlwatch-*.sh; do
-    script_name="$(basename "$script")"
-    cp "$script" "$TARGET/"
-    chmod +x "$TARGET/$script_name"
-    echo "  Installed: $TARGET/$script_name"
-  done
-
-  # 复制 lib 和 conf 到 ~/.local/share/owlwatch
-  SHARE_DIR="$HOME/.local/share/owlwatch"
-  mkdir -p "$SHARE_DIR"/{lib,conf}
-  cp "$SCRIPT_DIR"/lib/*.sh "$SHARE_DIR/lib/"
-  cp "$SCRIPT_DIR/conf/owlwatch.conf.example" "$SHARE_DIR/conf/"
-  [[ ! -f "$SHARE_DIR/conf/owlwatch.conf" ]] && \
-    cp "$SHARE_DIR/conf/owlwatch.conf.example" "$SHARE_DIR/conf/owlwatch.conf"
-
-  # 修改脚本中的路径指向安装位置
-  for script in "$TARGET"/owlwatch-*.sh; do
-    if grep -q 'ROOT_DIR=' "$script" 2>/dev/null; then
-      sed -i.bak "s|ROOT_DIR=.*|ROOT_DIR=\"$SHARE_DIR\"|" "$script"
-      rm -f "${script}.bak"
-    fi
-  done
-
-  echo ""
-  echo "Installed successfully!"
-  echo ""
-  echo "Usage:"
-  echo "  owlwatch-health.sh"
-  echo "  owlwatch-clean.sh --yes"
-  echo "  owlwatch-chrome.sh"
-  echo ""
+# 修改主入口中的 SCRIPT_DIR 指向 share 目录
+if grep -q 'SCRIPT_DIR=' "$BIN_DIR/owlwatch" 2>/dev/null; then
+  sed -i.bak "s|SCRIPT_DIR=\".*\"|SCRIPT_DIR=\"$SHARE_DIR/bin\"|" "$BIN_DIR/owlwatch"
+  sed -i.bak "s|ROOT_DIR=\".*\"|ROOT_DIR=\"$SHARE_DIR\"|" "$BIN_DIR/owlwatch"
+  rm -f "$BIN_DIR/owlwatch.bak"
 fi
+
+# 修改子脚本中的 ROOT_DIR
+for script in "$SHARE_DIR/bin"/owlwatch-*.sh; do
+  if grep -q 'ROOT_DIR=' "$script" 2>/dev/null; then
+    sed -i.bak "s|ROOT_DIR=\".*\"|ROOT_DIR=\"$SHARE_DIR\"|" "$script"
+    rm -f "${script}.bak"
+  fi
+done
+
+echo "  CLI installed to $BIN_DIR/owlwatch"
+echo "  Data in $SHARE_DIR/"
+
+# 确保 ~/.local/bin 在 PATH
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+  echo ""
+  echo "  NOTE: Add ~/.local/bin to your PATH:"
+  echo "    echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
+  echo "    source ~/.bashrc"
+fi
+
+# ─── 2. Claude Code skill（可选） ───
+
+if $INSTALL_CLAUDE; then
+  CLAUDE_DIR="$HOME/.claude/skills/owlwatch"
+  conf_backup=""
+  if [[ -f "$CLAUDE_DIR/conf/owlwatch.conf" ]]; then
+    conf_backup="$(mktemp)"
+    cp "$CLAUDE_DIR/conf/owlwatch.conf" "$conf_backup"
+  fi
+
+  mkdir -p "$CLAUDE_DIR"/{bin,lib,conf}
+  cp "$SCRIPT_DIR"/bin/owlwatch "$CLAUDE_DIR/bin/"
+  cp "$SCRIPT_DIR"/bin/*.sh "$CLAUDE_DIR/bin/"
+  cp "$SCRIPT_DIR"/lib/*.sh "$CLAUDE_DIR/lib/"
+  cp "$SCRIPT_DIR/conf/owlwatch.conf.example" "$CLAUDE_DIR/conf/"
+  chmod +x "$CLAUDE_DIR/bin/"*
+
+  if [[ -n "$conf_backup" ]] && [[ -f "$conf_backup" ]]; then
+    cp "$conf_backup" "$CLAUDE_DIR/conf/owlwatch.conf"
+    rm -f "$conf_backup"
+  else
+    [[ ! -f "$CLAUDE_DIR/conf/owlwatch.conf" ]] && \
+      cp "$CLAUDE_DIR/conf/owlwatch.conf.example" "$CLAUDE_DIR/conf/owlwatch.conf"
+  fi
+
+  # 安装 SKILL.md
+  if [[ -f "$SCRIPT_DIR/adapters/claude-code.md" ]]; then
+    cp "$SCRIPT_DIR/adapters/claude-code.md" "$CLAUDE_DIR/SKILL.md"
+  fi
+
+  echo "  Claude Code skill installed to $CLAUDE_DIR/"
+fi
+
+# ─── 3. Cursor / Windsurf 提示 ───
+
+if $INSTALL_CURSOR; then
+  echo ""
+  echo "  Cursor setup:"
+  echo "    cp $SCRIPT_DIR/adapters/cursor.md .cursor/rules/owlwatch.md"
+fi
+
+if $INSTALL_WINDSURF; then
+  echo ""
+  echo "  Windsurf setup:"
+  echo "    cat $SCRIPT_DIR/adapters/windsurf.md >> .windsurfrules"
+fi
+
+echo ""
+echo "Done! Run: owlwatch health"
+echo ""

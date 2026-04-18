@@ -1,0 +1,83 @@
+#!/bin/bash
+# owlwatch — Unified CLI entry point
+# Usage: owlwatch <command> [options]
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+version="1.0.0"
+
+show_help() {
+  cat <<EOF
+owlwatch v${version} — System performance monitor for macOS/Linux
+
+Usage:
+  owlwatch <command> [options]
+
+Commands:
+  health              System health report (default)
+  clean               Scan orphan processes
+  chrome              Chrome memory & extension analysis
+  daemon              Background daemon management
+
+Options:
+  health:
+    --json            Output as JSON
+
+  clean:
+    --yes, -y         Auto-clean all detected orphans
+    --pid, -p PID     Kill specific PID
+    --name, -n NAME   Kill all processes by exact name
+    (no options)      Scan only, no killing
+
+  daemon:
+    install           Install launchd daemon (macOS)
+    uninstall         Remove daemon
+    status            Show daemon status
+
+  -h, --help          Show this help
+  -v, --version       Show version
+
+Examples:
+  owlwatch                        # Full health report
+  owlwatch health --json          # JSON output
+  owlwatch clean                  # Scan orphans
+  owlwatch clean --yes            # Auto-clean orphans
+  owlwatch clean --name codex     # Kill all codex processes
+  owlwatch chrome                 # Chrome analysis
+  owlwatch daemon install         # Install auto-cleanup
+
+EOF
+}
+
+# ─── 参数路由 ───
+
+cmd="${1:-health}"
+shift 2>/dev/null || true
+
+case "$cmd" in
+  health|h|status|report)
+    exec bash "$SCRIPT_DIR/owlwatch-health.sh" "$@"
+    ;;
+  clean|kill|cleanup)
+    exec bash "$SCRIPT_DIR/owlwatch-clean.sh" "$@"
+    ;;
+  chrome|browser)
+    exec bash "$SCRIPT_DIR/owlwatch-chrome.sh" "$@"
+    ;;
+  daemon|service|bg)
+    exec bash "$SCRIPT_DIR/owlwatch-daemon.sh" "$@"
+    ;;
+  help|--help|-h)
+    show_help
+    ;;
+  version|--version|-v)
+    echo "owlwatch v${version}"
+    ;;
+  *)
+    echo "Unknown command: $cmd"
+    echo "Run 'owlwatch help' for usage."
+    exit 1
+    ;;
+esac
