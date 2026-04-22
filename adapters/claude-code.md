@@ -1,13 +1,17 @@
 # /owlwatch — System Performance Monitor
 
 ## Trigger
-User says "/owlwatch", "check system", "system health", "fan noisy", "computer slow", "kill process", "clean processes", "Chrome analysis", "memory analysis", "process monitor", etc.
+User says "/owlwatch", "check system", "system health", "fan noisy", "computer slow", "kill process", "clean processes", "Chrome analysis", "memory analysis", "process monitor", "dev environment check", "config audit", "环境体检", "配置检查", "开发环境", "doctor", "diagnose", etc.
 
 ## Command Routing
 
 | User intent | Command |
 |-------------|---------|
 | System health / check system | `owlwatch health` |
+| Dev environment check / config audit | `owlwatch doctor` |
+| Doctor full detail | `owlwatch doctor --detail` |
+| Doctor JSON output | `owlwatch doctor --json` |
+| Health + Doctor combined | `owlwatch doctor --all` |
 | Clean processes / kill processes | `owlwatch clean` |
 | Confirm clean | `owlwatch clean --yes` |
 | Kill specific PID | `owlwatch clean --pid <PID>` |
@@ -16,6 +20,8 @@ User says "/owlwatch", "check system", "system health", "fan noisy", "computer s
 | Install daemon | `owlwatch daemon install` |
 | Uninstall daemon | `owlwatch daemon uninstall` |
 | Daemon status | `owlwatch daemon status` |
+
+When user says `/owlwatch` without arguments, default to `health`. When user mentions "开发环境", "配置检查", "环境体检", "doctor", "diagnose", "config audit", run `owlwatch doctor`.
 
 ## Execution Flow
 

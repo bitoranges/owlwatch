@@ -17,6 +17,7 @@ Usage:
 
 Commands:
   health              System health report (default)
+  doctor              Dev environment check (15 dimensions)
   clean               Scan orphan processes
   chrome              Chrome memory & extension analysis
   daemon              Background daemon management
@@ -24,6 +25,11 @@ Commands:
 Options:
   health:
     --json            Output as JSON
+
+  doctor:
+    --detail          Full detail with sub-items
+    --json            JSON output
+    --all             Combined health + doctor report
 
   clean:
     --yes, -y         Auto-clean all detected orphans
@@ -42,6 +48,9 @@ Options:
 Examples:
   owlwatch                        # Full health report
   owlwatch health --json          # JSON output
+  owlwatch doctor                 # Dev environment check
+  owlwatch doctor --detail        # Full detail report
+  owlwatch doctor --json          # JSON output
   owlwatch clean                  # Scan orphans
   owlwatch clean --yes            # Auto-clean orphans
   owlwatch clean --name codex     # Kill all codex processes
@@ -68,6 +77,9 @@ case "$cmd" in
     ;;
   daemon|service|bg)
     exec bash "$SCRIPT_DIR/owlwatch-daemon.sh" "$@"
+    ;;
+  doctor|check|diag|diagnose)
+    exec bash "$SCRIPT_DIR/owlwatch-doctor.sh" "$@"
     ;;
   help|--help|-h)
     show_help
