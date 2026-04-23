@@ -85,15 +85,113 @@ _owd_settings_path() {
   echo ""
 }
 
-# ─── 15 个维度检查 ───
+# ─── 多工具探测层 ───
+
+_OWD_TOOL_LIST="claude cursor windsurf codex gemini"
+_OWD_ACTIVE_TOOLS=""
+
+# 检测已安装的 AI 工具
+_owd_detect_tools() {
+  local detected=""
+  for t in $_OWD_TOOL_LIST; do
+    if _owd_has_cmd "$t" || [[ -d "$(_owd_tool_home "$t")" ]]; then
+      detected="$detected $t"
+    fi
+  done
+  _OWD_ACTIVE_TOOLS="${detected# }"
+}
+
+# 返回工具主目录
+_owd_tool_home() {
+  case "$1" in
+    claude)   echo "$HOME/.claude" ;;
+    cursor)   echo "$HOME/.cursor" ;;
+    windsurf) echo "$HOME/.codeium/windsurf" ;;
+    codex)    echo "$HOME/.codex" ;;
+    gemini)   echo "$HOME/.gemini" ;;
+  esac
+}
+
+# 返回设置文件路径
+_owd_tool_setting() {
+  local home="$(_owd_tool_home "$1")"
+  case "$1" in
+    claude)
+      [[ -f "$home/settings.json" ]] && echo "$home/settings.json" && return
+      [[ -f "$home/settings.local.json" ]] && echo "$home/settings.local.json" && return
+      ;;
+    cursor)   [[ -f "$home/config.json" ]] && echo "$home/config.json" ;;
+    windsurf) [[ -f "$home/mcp_config.json" ]] && echo "$home/mcp_config.json" ;;
+    codex)    [[ -f "$home/config.toml" ]] && echo "$home/config.toml" ;;
+    gemini)   [[ -f "$home/settings.json" ]] && echo "$home/settings.json" ;;
+  esac
+}
+
+# 返回规则目录
+_owd_tool_rules_dir() {
+  case "$1" in
+    claude)   echo "$HOME/.claude/rules" ;;
+    cursor)   echo "$HOME/.cursor/rules" ;;
+    windsurf) echo "" ;;  # 项目级 .windsurf/ only
+    codex)    echo "$HOME/.codex/rules" ;;
+    gemini)   echo "" ;;  # GEMINI.md only
+  esac
+}
+
+# 返回技能目录
+_owd_tool_skills_dir() {
+  case "$1" in
+    claude)   echo "$HOME/.claude/skills" ;;
+    cursor)   echo "$HOME/.cursor/skills" ;;
+    windsurf) echo "" ;;  # 项目级 .windsurf/skills/ only
+    codex)    echo "$HOME/.codex/skills" ;;
+    gemini)   echo "" ;;
+  esac
+}
+
+# 返回 agents 目录
+_owd_tool_agents_dir() {
+  case "$1" in
+    claude)   echo "$HOME/.claude/agents" ;;
+    cursor)   echo "$HOME/.cursor/agents" ;;
+    windsurf) echo "" ;;
+    codex)    echo "$HOME/.codex/agents" ;;
+    gemini)   echo "" ;;
+  esac
+}
+
+# 返回全局指令文件
+_owd_tool_global_md() {
+  case "$1" in
+    claude)   echo "$HOME/.claude/CLAUDE.md" ;;
+    cursor)   echo "" ;;
+    windsurf) echo "" ;;
+    codex)    echo "$HOME/.codex/instructions.md" ;;
+    gemini)   [[ -f "$HOME/.gemini/GEMINI.md" ]] && echo "$HOME/.gemini/GEMINI.md" ;;
+  esac
+}
+
+# 返回 MCP 配置文件
+_owd_tool_mcp_file() {
+  case "$1" in
+    claude)   echo "$HOME/.claude/.mcp.json" ;;
+    cursor)   echo "$HOME/.cursor/mcp.json" ;;
+    windsurf) echo "$HOME/.codeium/windsurf/mcp_config.json" ;;
+    codex)    echo "" ;;
+    gemini)   echo "" ;;
+  esac
+}
+
+# ─── 16 个维度检查 ───
 # 每个函数设置 _OWD_STATUS / _OWD_SCORE / _OWD_MAX / _OWD_SUMMARY / _OWD_DETAIL
 
 # 1. 工具链可用性 (10分)
 owd_check_tools() {
   _OWD_MAX=10
-  local tools="claude codex cursor windsurf node python3 go git gh tmux"
+  local tools="claude codex cursor windsurf gemini node python3 go git gh tmux"
   local found=0 total=0 detail=""
 
+  # AI 工具检测
   for t in $tools; do
     total=$((total + 1))
     if _owd_has_cmd "$t"; then
@@ -119,60 +217,64 @@ owd_check_tools() {
   fi
 }
 
-# 2. 模型配置 (7分)
+# 2. 模型配置 (7分) — 按工具分别检测模型设置
 owd_check_model_config() {
   _OWD_MAX=7
-  local sp
-  sp="$(_owd_settings_path)"
   _OWD_DETAIL=""
+  local total_issues=0 best_issues=999
 
-  if [[ -z "$sp" ]]; then
-    _OWD_STATUS="fail"
-    _OWD_SCORE=0
-    _OWD_SUMMARY="No settings.json found"
-    _OWD_DETAIL="  ❌ ~/.claude/settings.json not found\n"
-    return
-  fi
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local sp="$(_owd_tool_setting "$_tool")"
+    if [[ -z "$sp" ]]; then
+      _OWD_DETAIL+="  ℹ️  $_tool: no settings file\n"
+      continue
+    fi
 
-  local issues=0
-  local model
-  model="$(_owd_json_value "$sp" "model")"
-  if [[ -n "$model" ]]; then
-    _OWD_DETAIL+="  ✅ Model: $model\n"
-  else
-    _OWD_DETAIL+="  ⚠️  No model preference set (uses default)\n"
-    issues=$((issues + 1))
-  fi
+    local issues=0
+    case "$_tool" in
+      claude)
+        local model thinking ctx_budget
+        model="$(_owd_json_value "$sp" "model")"
+        thinking="$(_owd_json_value "$sp" "alwaysThinkingEnabled")"
+        ctx_budget="$(_owd_json_value "$sp" "contextBudget")"
+        [[ -n "$model" ]] && _OWD_DETAIL+="  ✅ Claude Model: $model\n" || { _OWD_DETAIL+="  ⚠️  Claude: no model preference\n"; issues=$((issues + 1)); }
+        [[ "$thinking" == "true" ]] && _OWD_DETAIL+="  ✅ Claude thinking: enabled\n" || { _OWD_DETAIL+="  ⚠️  Claude thinking: not enabled\n"; issues=$((issues + 1)); }
+        [[ -n "$ctx_budget" ]] && _OWD_DETAIL+="  ✅ Claude context budget: $ctx_budget\n" || _OWD_DETAIL+="  ℹ️  Claude context budget: default\n"
+        ;;
+      cursor)
+        local model
+        model="$(_owd_json_value "$sp" "model")"
+        [[ -n "$model" ]] && _OWD_DETAIL+="  ✅ Cursor Model: $model\n" || { _OWD_DETAIL+="  ℹ️  Cursor: using default model\n"; issues=$((issues + 1)); }
+        ;;
+      gemini)
+        local model
+        model="$(_owd_json_value "$sp" "model")"
+        [[ -n "$model" ]] && _OWD_DETAIL+="  ✅ Gemini Model: $model\n" || { _OWD_DETAIL+="  ℹ️  Gemini: using default model\n"; issues=$((issues + 1)); }
+        ;;
+      *)
+        _OWD_DETAIL+="  ℹ️  $_tool: settings found at $sp\n"
+        ;;
+    esac
+    total_issues=$((total_issues + issues))
+    (( issues < best_issues )) && best_issues=$issues
+  done
 
-  local thinking
-  thinking="$(_owd_json_value "$sp" "alwaysThinkingEnabled")"
-  if [[ "$thinking" == "true" ]]; then
-    _OWD_DETAIL+="  ✅ Extended thinking: enabled\n"
-  else
-    _OWD_DETAIL+="  ⚠️  Extended thinking: not enabled\n"
-    issues=$((issues + 1))
-  fi
-
-  local ctx_budget
-  ctx_budget="$(_owd_json_value "$sp" "contextBudget")"
-  if [[ -n "$ctx_budget" ]]; then
-    _OWD_DETAIL+="  ✅ Context budget: $ctx_budget\n"
-  else
-    _OWD_DETAIL+="  ℹ️  Context budget: default\n"
-  fi
-
-  if (( issues == 0 )); then
+  if (( total_issues == 0 )); then
     _OWD_STATUS="pass"
     _OWD_SCORE=$_OWD_MAX
-    _OWD_SUMMARY="Model: ${model:-default}, thinking: ${thinking:-off}"
-  elif (( issues == 1 )); then
+    _OWD_SUMMARY="All tools configured"
+  elif (( best_issues == 0 )); then
+    _OWD_STATUS="pass"
+    _OWD_SCORE=$(( _OWD_MAX * 6 / 7 ))
+    _OWD_SUMMARY="Primary tool configured, minor gaps in others"
+  elif (( total_issues <= 2 )); then
     _OWD_STATUS="warn"
     _OWD_SCORE=$(( _OWD_MAX / 2 ))
-    _OWD_SUMMARY="Model: ${model:-default}, $issues config gap"
+    _OWD_SUMMARY="$total_issues config gap(s) across tools"
   else
     _OWD_STATUS="warn"
     _OWD_SCORE=$(( _OWD_MAX * 3 / 10 ))
-    _OWD_SUMMARY="$issues configuration gaps"
+    _OWD_SUMMARY="$total_issues configuration gaps"
   fi
 }
 
@@ -217,19 +319,31 @@ owd_check_mcp_servers() {
     ' "$cfg" 2>/dev/null
   }
 
-  local sp mcp_file
-  sp="$(_owd_settings_path)"
-  mcp_file="$HOME/.claude/.mcp.json"
-  local server_list=""
+  local sp mcp_file server_list=""
 
-  for cfg in "$sp" "$mcp_file" "$PWD/.mcp.json"; do
-    [[ -z "$cfg" || ! -f "$cfg" ]] && continue
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local tool_setting="$(_owd_tool_setting "$_tool")"
+    local tool_mcp="$(_owd_tool_mcp_file "$_tool")"
+    [[ -n "$tool_setting" || -n "$tool_mcp" ]] || continue
+
+    for cfg in "$tool_setting" "$tool_mcp"; do
+      [[ -z "$cfg" || ! -f "$cfg" ]] && continue
+      while IFS='|' read -r sname scmd; do
+        [[ -z "$sname" || -z "$scmd" ]] && continue
+        mcp_count=$((mcp_count + 1))
+        server_list+="${_tool}|${sname}|${scmd}"$'\n'
+      done < <(_owd_extract_mcp_servers "$cfg")
+    done
+  done
+
+  # 项目级 .mcp.json
+  if [[ -f "$PWD/.mcp.json" ]]; then
     while IFS='|' read -r sname scmd; do
       [[ -z "$sname" || -z "$scmd" ]] && continue
       mcp_count=$((mcp_count + 1))
-      server_list+="$sname|$scmd"$'\n'
-    done < <(_owd_extract_mcp_servers "$cfg")
-  done
+      server_list+="${_tool}|${sname}|${scmd}"$'\n'
+    done < <(_owd_extract_mcp_servers "$PWD/.mcp.json")
+  fi
 
   if (( mcp_count == 0 )); then
     _OWD_STATUS="warn"
@@ -240,14 +354,14 @@ owd_check_mcp_servers() {
   fi
 
   # 验证每个 server 的 command
-  while IFS='|' read -r sname scmd; do
+  while IFS='|' read -r tool_name sname scmd; do
     [[ -z "$sname" || -z "$scmd" ]] && continue
     local runner
     runner="$(echo "$scmd" | awk '{print $1}')"
     if _owd_has_cmd "$runner" || [[ -x "$runner" ]]; then
-      _OWD_DETAIL+="  ✅ $sname ($scmd)\n"
+      _OWD_DETAIL+="  ✅ ${tool_name}: $sname ($scmd)\n"
     else
-      _OWD_DETAIL+="  ❌ $sname: $runner not found\n"
+      _OWD_DETAIL+="  ❌ ${tool_name}: $sname: $runner not found\n"
       unreachable=$((unreachable + 1))
     fi
   done <<< "$server_list"
@@ -263,58 +377,82 @@ owd_check_mcp_servers() {
   fi
 }
 
-# 4. 权限配置 (5分)
+# 4. 权限配置 (5分) — Claude 权限 + 其他工具概况
 owd_check_permissions() {
   _OWD_MAX=5
-  local sp
-  sp="$(_owd_settings_path)"
   _OWD_DETAIL=""
+  local best_score=0 best_summary="No settings found" found_any=false
 
-  if [[ -z "$sp" ]]; then
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local sp="$(_owd_tool_setting "$_tool")"
+    [[ -n "$sp" ]] || continue
+    found_any=true
+
+    case "$_tool" in
+      claude)
+        local mode
+        mode="$(_owd_json_value "$sp" "defaultMode")"
+        local allowed_count
+        allowed_count="$(grep -c '"allow"' "$sp" 2>/dev/null || echo 0)"
+
+        if [[ "$mode" == "bypassPermissions" ]] || grep -q '"bypassPermissions"' "$sp" 2>/dev/null; then
+          _OWD_DETAIL+="  ⚠️  Claude: bypassPermissions enabled\n"
+          if (( best_score < 2 )); then
+            best_score=2; best_summary="Claude: bypass mode — security risk"
+          fi
+        elif [[ -n "$mode" ]]; then
+          _OWD_DETAIL+="  ✅ Claude: mode $mode, $allowed_count allowed\n"
+          best_score=$_OWD_MAX; best_summary="Claude mode: $mode, $allowed_count allowed"
+        else
+          _OWD_DETAIL+="  ℹ️  Claude: default permissions\n"
+          if (( best_score < 3 )); then
+            best_score=3; best_summary="Claude: default permissions"
+          fi
+        fi
+        ;;
+      *)
+        _OWD_DETAIL+="  ✅ $_tool: settings present\n"
+        if (( best_score < 4 )); then
+          best_score=4; best_summary="$_tool: configured"
+        fi
+        ;;
+    esac
+  done
+
+  if ! $found_any; then
     _OWD_STATUS="warn"
     _OWD_SCORE=3
-    _OWD_SUMMARY="No settings.json (default permissions)"
+    _OWD_SUMMARY="No settings found (default permissions)"
+    _OWD_DETAIL+="  ℹ️  No tool settings files found\n"
     return
   fi
 
-  # 实际字段是 permissions.defaultMode
-  local mode
-  mode="$(_owd_json_value "$sp" "defaultMode")"
-  local allowed_count
-  allowed_count="$(grep -c '"allow"' "$sp" 2>/dev/null || echo 0)"
-
-  # 检查 bypassPermissions（旧字段名兼容）
-  if [[ "$mode" == "bypassPermissions" ]] || grep -q '"bypassPermissions"' "$sp" 2>/dev/null; then
-    _OWD_STATUS="warn"
-    _OWD_SCORE=2
-    _OWD_SUMMARY="Bypass mode — security risk"
-    _OWD_DETAIL="  ⚠️  bypassPermissions enabled\n"
-    _OWD_DETAIL+="  ⚠️  Consider using plan or auto mode\n"
-  elif [[ -n "$mode" ]]; then
+  if (( best_score >= _OWD_MAX )); then
     _OWD_STATUS="pass"
-    _OWD_SCORE=$_OWD_MAX
-    _OWD_SUMMARY="Mode: $mode, $allowed_count allowed tool(s)"
-    _OWD_DETAIL+="  ✅ Mode: $mode\n"
-    _OWD_DETAIL+="  ✅ $allowed_count allowed tool(s)\n"
+  elif (( best_score >= 3 )); then
+    _OWD_STATUS="warn"
   else
     _OWD_STATUS="warn"
-    _OWD_SCORE=3
-    _OWD_SUMMARY="Default permissions (interactive prompts)"
-    _OWD_DETAIL+="  ℹ️  No explicit permission mode set\n"
   fi
+  _OWD_SCORE=$best_score
+  _OWD_SUMMARY="$best_summary"
 }
 
-# 5. Hooks 配置 (8分) — 提取实际 command 并验证
+# 5. Hooks 配置 (8分) — 目前仅 Claude 支持 hooks
 owd_check_hooks() {
   _OWD_MAX=8
+  _OWD_DETAIL=""
+
+  # Hooks 是 Claude 特有功能
   local sp
-  sp="$(_owd_settings_path)"
+  sp="$(_owd_tool_setting "claude")"
   _OWD_DETAIL=""
 
   if [[ -z "$sp" ]]; then
     _OWD_STATUS="warn"
     _OWD_SCORE=4
-    _OWD_SUMMARY="No settings.json (cannot check hooks)"
+    _OWD_SUMMARY="No Claude settings.json (cannot check hooks)"
+    _OWD_DETAIL="  ℹ️  Hooks only supported by Claude Code\n"
     return
   fi
 
@@ -422,41 +560,45 @@ owd_check_hooks() {
   fi
 }
 
-# 6. Skills (5分) — 检查数量、SKILL.md 完整性、token 开销
+# 6. Skills (5分) — 检查数量、SKILL.md 完整性、token 开销（多工具）
 owd_check_skills() {
   _OWD_MAX=5
   _OWD_DETAIL=""
 
-  local skill_dir="$HOME/.claude/skills"
   local skill_count=0 total_tokens=0 missing_readme=0 heavy_skills=0
 
-  if [[ ! -d "$skill_dir" ]]; then
-    _OWD_STATUS="fail"
-    _OWD_SCORE=0
-    _OWD_SUMMARY="No skills directory"
-    _OWD_DETAIL="  ❌ $skill_dir not found\n"
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local dir="$(_owd_tool_skills_dir "$_tool")"
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    local t_count=0
+    for d in "$dir"/*/; do
+      [[ -d "$d" ]] || continue
+      t_count=$((t_count + 1))
+      skill_count=$((skill_count + 1))
+      if _owd_has_file "$d/SKILL.md"; then
+        local tk
+        tk="$(_owd_estimate_tokens "$d/SKILL.md")"
+        total_tokens=$((total_tokens + tk))
+        if (( tk > 5000 )); then
+          heavy_skills=$((heavy_skills + 1))
+        fi
+      else
+        missing_readme=$((missing_readme + 1))
+      fi
+    done
+    local _tname; _tname="$(echo "$_tool" | awk '{print toupper(substr($0,1,1))tolower(substr($0,2))}')"
+    _OWD_DETAIL+="  ✅ $_tname: $t_count skills ($dir)\n"
+  done
+
+  if (( skill_count == 0 )); then
+    _OWD_STATUS="warn"
+    _OWD_SCORE=1
+    _OWD_SUMMARY="No skills installed"
+    _OWD_DETAIL="  ⚠️  No skills found for any tool\n"
     return
   fi
 
-  for d in "$skill_dir"/*/; do
-    [[ -d "$d" ]] || continue
-    skill_count=$((skill_count + 1))
-    local name
-    name="$(basename "$d")"
-    if _owd_has_file "$d/SKILL.md"; then
-      local tk
-      tk="$(_owd_estimate_tokens "$d/SKILL.md")"
-      total_tokens=$((total_tokens + tk))
-      if (( tk > 5000 )); then
-        heavy_skills=$((heavy_skills + 1))
-      fi
-    else
-      missing_readme=$((missing_readme + 1))
-    fi
-  done
-
-  # 摘要行
-  _OWD_DETAIL+="  ℹ️  $skill_count skills (~${total_tokens}t total)\n"
+  _OWD_DETAIL+="  ℹ️  $skill_count skills total (~${total_tokens}t)\n"
   if (( heavy_skills > 0 )); then
     _OWD_DETAIL+="  ⚠️  $heavy_skills heavy skill(s) (>5000t each)\n"
   fi
@@ -464,11 +606,7 @@ owd_check_skills() {
     _OWD_DETAIL+="  ⚠️  $missing_readme missing SKILL.md\n"
   fi
 
-  if (( skill_count == 0 )); then
-    _OWD_STATUS="warn"
-    _OWD_SCORE=1
-    _OWD_SUMMARY="No skills installed"
-  elif (( missing_readme > 0 )); then
+  if (( missing_readme > 0 )); then
     _OWD_STATUS="warn"
     _OWD_SCORE=3
     _OWD_SUMMARY="$skill_count skills, $missing_readme missing SKILL.md"
@@ -479,54 +617,62 @@ owd_check_skills() {
   fi
 }
 
-# 7. Agents (5分) — 检查数量、关键 agent 覆盖、内容有效性
+# 7. Agents (5分) — 检查数量、关键 agent 覆盖、内容有效性（多工具）
 owd_check_agents() {
   _OWD_MAX=5
   _OWD_DETAIL=""
 
-  local agent_dir="$HOME/.claude/agents"
   local agent_count=0 empty_agents=0 total_tokens=0
-
-  if [[ ! -d "$agent_dir" ]]; then
-    _OWD_STATUS="warn"
-    _OWD_SCORE=2
-    _OWD_SUMMARY="No agents directory"
-    _OWD_DETAIL="  ⚠️  $agent_dir not found\n"
-    return
-  fi
-
-  for f in "$agent_dir"/*.md; do
-    [[ -f "$f" ]] || continue
-    agent_count=$((agent_count + 1))
-    local name
-    name="$(basename "$f" .md)"
-    local lines
-    lines="$(wc -l < "$f" | tr -d ' ')"
-    local tk
-    tk="$(_owd_estimate_tokens "$f")"
-    total_tokens=$((total_tokens + tk))
-    if (( lines < 5 )); then
-      empty_agents=$((empty_agents + 1))
-    fi
-  done
-
-  # 关键 agent 覆盖
   local key="planner architect tdd-guide code-reviewer security-reviewer build-error-resolver"
   local key_found=0
-  for k in $key; do
-    [[ -f "$agent_dir/$k.md" ]] && key_found=$((key_found + 1))
+
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local dir="$(_owd_tool_agents_dir "$_tool")"
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    local t_count=0
+    for f in "$dir"/*.md; do
+      [[ -f "$f" ]] || continue
+      t_count=$((t_count + 1))
+      agent_count=$((agent_count + 1))
+      local tk
+      tk="$(_owd_estimate_tokens "$f")"
+      total_tokens=$((total_tokens + tk))
+      local lines
+      lines="$(wc -l < "$f" | tr -d ' ')"
+      if (( lines < 5 )); then
+        empty_agents=$((empty_agents + 1))
+      fi
+    done
+    local _tname; _tname="$(echo "$_tool" | awk '{print toupper(substr($0,1,1))tolower(substr($0,2))}')"
+    _OWD_DETAIL+="  ✅ $_tname: $t_count agents ($dir)\n"
   done
+
+  # 关键 agent 覆盖（检查所有工具）
+  for k in $key; do
+    for _tool in $_OWD_ACTIVE_TOOLS; do
+      local dir="$(_owd_tool_agents_dir "$_tool")"
+      [[ -n "$dir" ]] || continue
+      if [[ -f "$dir/$k.md" ]]; then
+        key_found=$((key_found + 1))
+        break
+      fi
+    done
+  done
+
+  if (( agent_count == 0 )); then
+    _OWD_STATUS="warn"
+    _OWD_SCORE=2
+    _OWD_SUMMARY="No agent definitions"
+    _OWD_DETAIL="  ⚠️  No agents found for any tool\n"
+    return
+  fi
 
   _OWD_DETAIL+="  ℹ️  $agent_count agents (~${total_tokens}t), $key_found/7 key agents\n"
   if (( empty_agents > 0 )); then
     _OWD_DETAIL+="  ⚠️  $empty_agents agent(s) with <5 lines (stub)\n"
   fi
 
-  if (( agent_count == 0 )); then
-    _OWD_STATUS="warn"
-    _OWD_SCORE=2
-    _OWD_SUMMARY="No agent definitions"
-  elif (( key_found >= 4 && empty_agents == 0 )); then
+  if (( key_found >= 4 && empty_agents == 0 )); then
     _OWD_STATUS="pass"
     _OWD_SCORE=$_OWD_MAX
     _OWD_SUMMARY="$agent_count agents, $key_found key agents"
@@ -541,56 +687,69 @@ owd_check_agents() {
   fi
 }
 
-# 8. Rules (6分)
+# 8. Rules (6分) — 遍历所有已安装工具
 owd_check_rules() {
   _OWD_MAX=6
   _OWD_DETAIL=""
 
-  local rules_dir="$HOME/.claude/rules"
-  if [[ ! -d "$rules_dir" ]]; then
+  local any_found=false
+
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local rules_dir="$(_owd_tool_rules_dir "$_tool")"
+    [[ -n "$rules_dir" && -d "$rules_dir" ]] || continue
+    any_found=true
+
+    local common_files=0
+    if [[ -d "$rules_dir/common" ]]; then
+      for f in "$rules_dir/common"/*.md; do
+        [[ -f "$f" ]] && common_files=$((common_files + 1))
+      done
+    fi
+
+    local lang_dirs=0
+    for d in "$rules_dir"/*/; do
+      local dn
+      dn="$(basename "$d")"
+      [[ "$dn" == "common" || "$dn" == "zh" ]] && continue
+      [[ -f "$d/${dn}.md" ]] || [[ -n "$(ls "$d"/*.md 2>/dev/null)" ]] && lang_dirs=$((lang_dirs + 1))
+    done
+
+    local _tname; _tname="$(echo "$_tool" | awk '{print toupper(substr($0,1,1))tolower(substr($0,2))}')"
+    _OWD_DETAIL+="  ✅ $_tname: common/$common_files files, $lang_dirs lang sets\n"
+  done
+
+  if ! $any_found; then
     _OWD_STATUS="fail"
     _OWD_SCORE=0
-    _OWD_SUMMARY="No rules directory"
-    _OWD_DETAIL="  ❌ $rules_dir not found\n"
+    _OWD_SUMMARY="No rules directory for any tool"
+    _OWD_DETAIL="  ❌ No rules found for any AI tool\n"
     return
   fi
 
-  # 检查 common 目录
-  local common_files=0
-  if [[ -d "$rules_dir/common" ]]; then
+  # 用第一个有 rules 的工具计分（通常 Claude 最全）
+  local best_common=0
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local rules_dir="$(_owd_tool_rules_dir "$_tool")"
+    [[ -n "$rules_dir" && -d "$rules_dir/common" ]] || continue
+    local cf=0
     for f in "$rules_dir/common"/*.md; do
-      [[ -f "$f" ]] && common_files=$((common_files + 1))
+      [[ -f "$f" ]] && cf=$((cf + 1))
     done
-  fi
-
-  # 检查语言目录
-  local lang_dirs=0
-  for d in "$rules_dir"/*/; do
-    local dn
-    dn="$(basename "$d")"
-    [[ "$dn" == "common" || "$dn" == "zh" ]] && continue
-    [[ -f "$d/${dn}.md" ]] || [[ -n "$(ls "$d"/*.md 2>/dev/null)" ]] && lang_dirs=$((lang_dirs + 1))
+    (( cf > best_common )) && best_common=$cf
   done
 
-  _OWD_DETAIL+="  ✅ common/: $common_files file(s)\n"
-  if (( lang_dirs > 0 )); then
-    _OWD_DETAIL+="  ✅ $lang_dirs language-specific rule set(s)\n"
-  else
-    _OWD_DETAIL+="  ℹ️  No language-specific rules\n"
-  fi
-
-  if (( common_files >= 5 )); then
+  if (( best_common >= 5 )); then
     _OWD_STATUS="pass"
     _OWD_SCORE=$_OWD_MAX
-    _OWD_SUMMARY="common: $common_files files, $lang_dirs lang sets"
-  elif (( common_files >= 1 )); then
+    _OWD_SUMMARY="Rules found across tools, best: $best_common common files"
+  elif (( best_common >= 1 )); then
     _OWD_STATUS="warn"
     _OWD_SCORE=3
-    _OWD_SUMMARY="common: $common_files files (incomplete)"
+    _OWD_SUMMARY="Partial rules: $best_common common files"
   else
     _OWD_STATUS="fail"
     _OWD_SCORE=0
-    _OWD_SUMMARY="No common rules"
+    _OWD_SUMMARY="No common rules found"
   fi
 }
 
@@ -600,21 +759,27 @@ owd_check_memory() {
   _OWD_DETAIL=""
   local quality=0
 
-  # 全局 CLAUDE.md（>=10 行才算有意义）
-  local gcm="$HOME/.claude/CLAUDE.md"
-  if _owd_has_file "$gcm"; then
+  # 全局指令文件（遍历所有工具）
+  local global_md_found=0
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local gmd="$(_owd_tool_global_md "$_tool")"
+    [[ -n "$gmd" && -f "$gmd" ]] || continue
+    global_md_found=$((global_md_found + 1))
     local lines
-    lines="$(wc -l < "$gcm" | tr -d ' ')"
+    lines="$(wc -l < "$gmd" | tr -d ' ')"
+    local tname
+    tname="$(basename "$gmd")"
     if (( lines >= 10 )); then
       quality=$((quality + 1))
-      _OWD_DETAIL+="  ✅ Global CLAUDE.md: ${lines} lines\n"
+      _OWD_DETAIL+="  ✅ $_tool $tname: ${lines} lines\n"
     elif (( lines >= 3 )); then
-      _OWD_DETAIL+="  ⚠️  Global CLAUDE.md thin (${lines} lines, need >=10)\n"
+      _OWD_DETAIL+="  ⚠️  $_tool $tname thin (${lines} lines, need >=10)\n"
     else
-      _OWD_DETAIL+="  ❌ Global CLAUDE.md too thin (${lines} lines)\n"
+      _OWD_DETAIL+="  ❌ $_tool $tname too thin (${lines} lines)\n"
     fi
-  else
-    _OWD_DETAIL+="  ❌ No global CLAUDE.md\n"
+  done
+  if (( global_md_found == 0 )); then
+    _OWD_DETAIL+="  ❌ No global instruction files found\n"
   fi
 
   # 项目级 memory 目录
@@ -754,14 +919,14 @@ owd_check_project_context() {
   fi
 }
 
-# 11. 上下文卫生 (6分) — 增加 CLAUDE.md 大小检查
+# 11. 上下文卫生 (6分) — 检测各工具全局指令大小 + ignore 文件
 owd_check_context_hygiene() {
   _OWD_MAX=6
   _OWD_DETAIL=""
 
   local has_cignore=false large_files=0 noise=0
 
-  # CLAUDE.md 大小检查（过大浪费 context）
+  # 项目级 CLAUDE.md 大小检查（所有 AI 工具共享）
   local project_cm="$PWD/CLAUDE.md"
   if _owd_has_file "$project_cm"; then
     local cm_lines
@@ -778,18 +943,21 @@ owd_check_context_hygiene() {
     fi
   fi
 
-  # 全局 CLAUDE.md 大小
-  local gcm="$HOME/.claude/CLAUDE.md"
-  if _owd_has_file "$gcm" ; then
-    local gcm_tokens
-    gcm_tokens="$(_owd_estimate_tokens "$gcm")"
-    if (( gcm_tokens > 2000 )); then
+  # 全局指令文件大小（遍历所有工具）
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local gmd="$(_owd_tool_global_md "$_tool")"
+    [[ -n "$gmd" && -f "$gmd" ]] || continue
+    local gmd_tokens
+    gmd_tokens="$(_owd_estimate_tokens "$gmd")"
+    local tname
+    tname="$(basename "$gmd")"
+    if (( gmd_tokens > 2000 )); then
       noise=$((noise + 1))
-      _OWD_DETAIL+="  ⚠️  Global CLAUDE.md: ~${gcm_tokens}t — heavy overhead\n"
+      _OWD_DETAIL+="  ⚠️  $_tool $tname: ~${gmd_tokens}t — heavy overhead\n"
     else
-      _OWD_DETAIL+="  ✅ Global CLAUDE.md: ~${gcm_tokens}t\n"
+      _OWD_DETAIL+="  ✅ $_tool $tname: ~${gmd_tokens}t\n"
     fi
-  fi
+  done
 
   if _owd_has_file "$PWD/.claudeignore"; then
     has_cignore=true
@@ -1014,9 +1182,9 @@ owd_check_security() {
     _OWD_DETAIL+="  ✅ No obvious hardcoded secrets\n"
   fi
 
-  # .claude/settings.json 权限
-  local sp="$HOME/.claude/settings.json"
-  if [[ -f "$sp" ]]; then
+  # Claude settings.json 权限
+  local sp="$(_owd_tool_setting "claude")"
+  if [[ -n "$sp" && -f "$sp" ]]; then
     local sp_perms
     sp_perms="$(stat -f '%Lp' "$sp" 2>/dev/null || stat -c '%a' "$sp" 2>/dev/null || echo "644")"
     if [[ "${sp_perms: -1}" -le 6 ]]; then
@@ -1028,7 +1196,7 @@ owd_check_security() {
   fi
 
   # 检查 bypassPermissions
-  if [[ -f "$sp" ]] && grep -q '"bypassPermissions"' "$sp" 2>/dev/null; then
+  if [[ -n "$sp" ]] && grep -q '"bypassPermissions"' "$sp" 2>/dev/null; then
     _OWD_DETAIL+="  ❌ bypassPermissions enabled — all safety guards off\n"
     issues=$((issues + 3))
   fi
@@ -1048,35 +1216,54 @@ owd_check_security() {
   fi
 }
 
-# 15. 成本效率 (8分)
+# 15. 成本效率 (8分) — 汇总所有工具的 token 开销
 owd_check_cost_efficiency() {
   _OWD_MAX=8
   _OWD_DETAIL=""
 
   local total_tokens=0
 
-  # Skills tokens
-  for f in "$HOME/.claude/skills"/*/SKILL.md; do
-    [[ -f "$f" ]] || continue
-    total_tokens=$((total_tokens + $(_owd_estimate_tokens "$f")))
-  done
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local tool_tokens=0
 
-  # Agents tokens
-  for f in "$HOME/.claude/agents"/*.md; do
-    [[ -f "$f" ]] || continue
-    total_tokens=$((total_tokens + $(_owd_estimate_tokens "$f")))
-  done
+    # Skills tokens
+    local sdir="$(_owd_tool_skills_dir "$_tool")"
+    if [[ -n "$sdir" && -d "$sdir" ]]; then
+      for f in "$sdir"/*/SKILL.md; do
+        [[ -f "$f" ]] || continue
+        tool_tokens=$((tool_tokens + $(_owd_estimate_tokens "$f")))
+      done
+    fi
 
-  # Rules tokens
-  for f in "$HOME/.claude/rules"/*.md "$HOME/.claude/rules"/**/*.md; do
-    [[ -f "$f" ]] || continue
-    total_tokens=$((total_tokens + $(_owd_estimate_tokens "$f")))
-  done
+    # Agents tokens
+    local adir="$(_owd_tool_agents_dir "$_tool")"
+    if [[ -n "$adir" && -d "$adir" ]]; then
+      for f in "$adir"/*.md; do
+        [[ -f "$f" ]] || continue
+        tool_tokens=$((tool_tokens + $(_owd_estimate_tokens "$f")))
+      done
+    fi
 
-  # Global CLAUDE.md
-  if _owd_has_file "$HOME/.claude/CLAUDE.md"; then
-    total_tokens=$((total_tokens + $(_owd_estimate_tokens "$HOME/.claude/CLAUDE.md")))
-  fi
+    # Rules tokens
+    local rdir="$(_owd_tool_rules_dir "$_tool")"
+    if [[ -n "$rdir" && -d "$rdir" ]]; then
+      for f in "$rdir"/*.md "$rdir"/**/*.md; do
+        [[ -f "$f" ]] || continue
+        tool_tokens=$((tool_tokens + $(_owd_estimate_tokens "$f")))
+      done
+    fi
+
+    # Global instruction file
+    local gmd="$(_owd_tool_global_md "$_tool")"
+    if [[ -n "$gmd" && -f "$gmd" ]]; then
+      tool_tokens=$((tool_tokens + $(_owd_estimate_tokens "$gmd")))
+    fi
+
+    if (( tool_tokens > 0 )); then
+      total_tokens=$((total_tokens + tool_tokens))
+      _OWD_DETAIL+="  ℹ️  $_tool: ~${tool_tokens}t\n"
+    fi
+  done
 
   _OWD_DETAIL+="  ℹ️  Total context overhead: ~${total_tokens} tokens\n"
 
@@ -1097,7 +1284,7 @@ owd_check_cost_efficiency() {
     _OWD_SCORE=$(( _OWD_MAX / 4 ))
     _OWD_SUMMARY="~${total_tokens}t overhead — heavy, review skills/rules"
   fi
-  _OWD_DETAIL+="  ℹ️  (rules + skills + agents + global CLAUDE.md)\n"
+  _OWD_DETAIL+="  ℹ️  (all tools: rules + skills + agents + global instructions)\n"
 }
 
 # 16. 开发流程 (8分) — 传统 + AI 开发实践
@@ -1124,18 +1311,23 @@ owd_check_workflow() {
     _OWD_DETAIL+="  ⚠️  Plan flow: CLAUDE.md missing planning instructions\n"
   fi
 
-  # 1b. planner agent 存在
-  if _owd_has_file "$HOME/.claude/agents/planner.md"; then
-    plan_score=$((plan_score + 1))
-  fi
+  # 1b. planner agent 存在（遍历工具）
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local adir="$(_owd_tool_agents_dir "$_tool")"
+    [[ -n "$adir" && -f "$adir/planner.md" ]] && { plan_score=$((plan_score + 1)); break; }
+  done
 
-  # 1c. development-workflow.md 规则（定义完整开发流程）
+  # 1c. development-workflow.md 规则（遍历工具）
   local dev_workflow=false
-  if [[ -f "$HOME/.claude/rules/development-workflow.md" ]] || \
-     [[ -f "$HOME/.claude/rules/common/development-workflow.md" ]]; then
-    dev_workflow=true
-    plan_score=$((plan_score + 1))
-  fi
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local rdir="$(_owd_tool_rules_dir "$_tool")"
+    [[ -n "$rdir" ]] || continue
+    if [[ -f "$rdir/development-workflow.md" ]] || [[ -f "$rdir/common/development-workflow.md" ]]; then
+      dev_workflow=true
+      plan_score=$((plan_score + 1))
+      break
+    fi
+  done
 
   if (( plan_score >= 3 )); then
     quality=$((quality + 1))
@@ -1205,16 +1397,21 @@ owd_check_workflow() {
     _OWD_DETAIL+="  ⚠️  No test framework found\n"
   fi
 
-  # 3b. tdd-guide agent（写测试的习惯）
-  if _owd_has_file "$HOME/.claude/agents/tdd-guide.md"; then
-    tdd_score=$((tdd_score + 1))
-  fi
+  # 3b. tdd-guide agent（遍历工具）
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local adir="$(_owd_tool_agents_dir "$_tool")"
+    [[ -n "$adir" && -f "$adir/tdd-guide.md" ]] && { tdd_score=$((tdd_score + 1)); break; }
+  done
 
-  # 3c. testing 规则
-  if [[ -f "$HOME/.claude/rules/testing.md" ]] || \
-     [[ -f "$HOME/.claude/rules/common/testing.md" ]]; then
-    tdd_score=$((tdd_score + 1))
-  fi
+  # 3c. testing 规则（遍历工具）
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local rdir="$(_owd_tool_rules_dir "$_tool")"
+    [[ -n "$rdir" ]] || continue
+    if [[ -f "$rdir/testing.md" ]] || [[ -f "$rdir/common/testing.md" ]]; then
+      tdd_score=$((tdd_score + 1))
+      break
+    fi
+  done
 
   if $found_test && (( tdd_score >= 2 )); then
     quality=$((quality + 1))
@@ -1231,21 +1428,27 @@ owd_check_workflow() {
   # ─── 4. Code Review 流程 ───
   local review_score=0
 
-  # 4a. code-reviewer agent
-  if _owd_has_file "$HOME/.claude/agents/code-reviewer.md"; then
-    review_score=$((review_score + 1))
-  fi
+  # 4a. code-reviewer agent（遍历工具）
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local adir="$(_owd_tool_agents_dir "$_tool")"
+    [[ -n "$adir" && -f "$adir/code-reviewer.md" ]] && { review_score=$((review_score + 1)); break; }
+  done
 
-  # 4b. code-review 规则
-  if [[ -f "$HOME/.claude/rules/code-review.md" ]] || \
-     [[ -f "$HOME/.claude/rules/common/code-review.md" ]]; then
-    review_score=$((review_score + 1))
-  fi
+  # 4b. code-review 规则（遍历工具）
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local rdir="$(_owd_tool_rules_dir "$_tool")"
+    [[ -n "$rdir" ]] || continue
+    if [[ -f "$rdir/code-review.md" ]] || [[ -f "$rdir/common/code-review.md" ]]; then
+      review_score=$((review_score + 1))
+      break
+    fi
+  done
 
-  # 4c. security-reviewer agent
-  if _owd_has_file "$HOME/.claude/agents/security-reviewer.md"; then
-    review_score=$((review_score + 1))
-  fi
+  # 4c. security-reviewer agent（遍历工具）
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local adir="$(_owd_tool_agents_dir "$_tool")"
+    [[ -n "$adir" && -f "$adir/security-reviewer.md" ]] && { review_score=$((review_score + 1)); break; }
+  done
 
   if (( review_score >= 2 )); then
     quality=$((quality + 1))
@@ -1257,12 +1460,13 @@ owd_check_workflow() {
   fi
 
   # ─── 5. 质量门禁 (Hooks) ───
-  local sp
-  sp="$(_owd_settings_path)"
   local gate_score=0
 
+  # Hooks 仅 Claude 支持
+  local sp
+  sp="$(_owd_tool_setting "claude")"
   if [[ -n "$sp" ]]; then
-    # 5a. PreToolUse hooks（pre-commit 级别的检查）
+    # 5a. PreToolUse hooks
     if grep -q '"PreToolUse"' "$sp" 2>/dev/null; then
       gate_score=$((gate_score + 1))
       _OWD_DETAIL+="  ✅ PreToolUse hooks: pre-execution validation\n"
@@ -1375,9 +1579,17 @@ owd_check_workflow() {
       _OWD_DETAIL+="  ⚠️  No conventional commits detected\n"
     fi
 
-    # 8b. git-workflow 规则
-    if [[ -f "$HOME/.claude/rules/git-workflow.md" ]] || \
-       [[ -f "$HOME/.claude/rules/common/git-workflow.md" ]]; then
+    # 8b. git-workflow 规则（遍历工具）
+    local found_gw=false
+    for _tool in $_OWD_ACTIVE_TOOLS; do
+      local rdir="$(_owd_tool_rules_dir "$_tool")"
+      [[ -n "$rdir" ]] || continue
+      if [[ -f "$rdir/git-workflow.md" ]] || [[ -f "$rdir/common/git-workflow.md" ]]; then
+        found_gw=true
+        break
+      fi
+    done
+    if $found_gw; then
       git_score=$((git_score + 1))
     fi
 
@@ -1399,11 +1611,15 @@ owd_check_workflow() {
     quality=$((quality + 1))
   fi
 
-  # ─── 9. Rules 体系（编码规范） ───
+  # ─── 9. Rules 体系（编码规范） — 遍历工具 ───
   local common_count=0
-  if [[ -d "$HOME/.claude/rules/common" ]]; then
-    common_count="$(ls "$HOME/.claude/rules/common"/*.md 2>/dev/null | wc -l | tr -d ' ')"
-  fi
+  for _tool in $_OWD_ACTIVE_TOOLS; do
+    local rdir="$(_owd_tool_rules_dir "$_tool")"
+    [[ -n "$rdir" && -d "$rdir/common" ]] || continue
+    local tc
+    tc="$(ls "$rdir/common"/*.md 2>/dev/null | wc -l | tr -d ' ')"
+    (( tc > common_count )) && common_count=$tc
+  done
   if (( common_count >= 5 )); then
     quality=$((quality + 1))
     _OWD_DETAIL+="  ✅ Rules: $common_count common rules (disciplined)\n"
@@ -1413,14 +1629,18 @@ owd_check_workflow() {
     _OWD_DETAIL+="  ⚠️  Rules: no common rules — no coding standards\n"
   fi
 
-  # ─── 10. Agent 体系（分工合理） ───
-  local agent_dir="$HOME/.claude/agents"
+  # ─── 10. Agent 体系（分工合理） — 遍历工具 ───
   local key_agents="planner tdd-guide code-reviewer architect"
   local agents_found=0
   for ag in $key_agents; do
-    if _owd_has_file "$agent_dir/$ag.md"; then
-      agents_found=$((agents_found + 1))
-    fi
+    for _tool in $_OWD_ACTIVE_TOOLS; do
+      local adir="$(_owd_tool_agents_dir "$_tool")"
+      [[ -n "$adir" ]] || continue
+      if _owd_has_file "$adir/$ag.md"; then
+        agents_found=$((agents_found + 1))
+        break
+      fi
+    done
   done
   if (( agents_found >= 3 )); then
     quality=$((quality + 1))
@@ -1480,6 +1700,8 @@ owd_run_all_checks() {
   OWD_RESULTS=()
   OWD_DETAILS=()
   OWD_TOTAL_SCORE=0
+
+  _owd_detect_tools
 
   for func in "${_OWD_CHECK_FUNCS[@]}"; do
     "$func"
