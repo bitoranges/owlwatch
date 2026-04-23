@@ -1,6 +1,10 @@
 # owlwatch
 
 <p align="center">
+  <img src="demo.gif" alt="owlwatch demo" width="640" />
+</p>
+
+<p align="center">
   🦉 <strong>owlwatch</strong> — AI dev environment health check & system monitor
 </p>
 
